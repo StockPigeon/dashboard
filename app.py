@@ -391,6 +391,79 @@ with tab_pe_ev:
         st.plotly_chart(fig_sc, use_container_width=True)
 
 
+
+# -------------------------
+# ROIC vs EARNINGS YIELD TAB
+# -------------------------
+tab_roic_ey = st.tabs(["ROIC vs Earnings Yield"])[0]
+
+with tab_roic_ey:
+    st.subheader("ROIC vs Earnings Yield (Outliers & negatives removed, % axes)")
+
+    # Prepare data
+    df_roic_ey = df_filtered.copy()
+    df_roic_ey = numericify(df_roic_ey, ["roicTTM", "earningsYieldTTM"])
+    df_roic_ey = df_roic_ey.dropna(subset=["roicTTM", "earningsYieldTTM"])
+    df_roic_ey = df_roic_ey[(df_roic_ey["roicTTM"] >= 0) & (df_roic_ey["earningsYieldTTM"] >= 0)]
+
+    # Outlier removal (IQR method)
+    Q1_roic = df_roic_ey["roicTTM"].quantile(0.25)
+    Q3_roic = df_roic_ey["roicTTM"].quantile(0.75)
+    IQR_roic = Q3_roic - Q1_roic
+    Q1_ey = df_roic_ey["earningsYieldTTM"].quantile(0.25)
+    Q3_ey = df_roic_ey["earningsYieldTTM"].quantile(0.75)
+    IQR_ey = Q3_ey - Q1_ey
+
+    lower_roic = Q1_roic - 1.5 * IQR_roic
+    upper_roic = Q3_roic + 1.5 * IQR_roic
+    lower_ey = Q1_ey - 1.5 * IQR_ey
+    upper_ey = Q3_ey + 1.5 * IQR_ey
+
+    outliers = df_roic_ey[
+        (df_roic_ey["roicTTM"] < lower_roic) | (df_roic_ey["roicTTM"] > upper_roic) |
+        (df_roic_ey["earningsYieldTTM"] < lower_ey) | (df_roic_ey["earningsYieldTTM"] > upper_ey)
+    ]
+    df_roic_ey_clean = df_roic_ey[~df_roic_ey.index.isin(outliers.index)].copy()
+
+    # Convert to percent
+    df_roic_ey_clean["ROIC (%)"] = df_roic_ey_clean["roicTTM"] * 100
+    df_roic_ey_clean["Earnings Yield (%)"] = df_roic_ey_clean["earningsYieldTTM"] * 100
+
+    # Plot
+    fig_roic_ey = px.scatter(
+        df_roic_ey_clean,
+        x="Earnings Yield (%)",
+        y="ROIC (%)",
+        hover_name="name",
+        hover_data={
+            "symbol": True,
+            "sector": True,
+            "index": True,
+            "ROIC (%)": ":.2f",
+            "Earnings Yield (%)": ":.2f",
+        },
+        color="sector" if "sector" in df_roic_ey_clean.columns else None,
+        opacity=0.7,
+        title="ROIC vs Earnings Yield (Negatives & Outliers Removed, % Axes)",
+    )
+    fig_roic_ey.update_layout(
+        xaxis_title="Earnings Yield (%)",
+        yaxis_title="ROIC (%)",
+    )
+    st.plotly_chart(fig_roic_ey, use_container_width=True)
+
+    # Show outliers as a table (optional)
+    if not outliers.empty:
+        outliers_disp = outliers.copy()
+        outliers_disp["ROIC (%)"] = outliers_disp["roicTTM"] * 100
+        outliers_disp["Earnings Yield (%)"] = outliers_disp["earningsYieldTTM"] * 100
+        st.write("#### Outliers (excluded from chart)")
+        st.dataframe(
+            outliers_disp[["symbol", "name", "ROIC (%)", "Earnings Yield (%)"]].sort_values("ROIC (%)", ascending=False)
+        )
+
+
+
 # -------------------------
 # DATA TABLE TAB
 # -------------------------
@@ -404,3 +477,4 @@ with tab_table:
     )
 
     st.caption("Showing first 500 rows for performance. Export from the original CSVs if you need the full dataset.")
+
