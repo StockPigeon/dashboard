@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import plotly.express as px
-# from scipy.optimize import minimize
+from scipy.optimize import minimize
 import requests
 
 
@@ -470,120 +470,120 @@ with tab_roic_ey:
 # ---- CONFIG ----
 FMP_API_KEY = "3168acf93e1a4ca67ce62d850fdfc9bd"  # <-- Replace with your actual FMP API key
 
-# # ---- PORTFOLIO OPTIMIZER TAB ----
-# tab_portfolio = st.tabs(["Portfolio Optimizer"])[0]
+# ---- PORTFOLIO OPTIMIZER TAB ----
+tab_portfolio = st.tabs(["Portfolio Optimizer"])[0]
 
-# with tab_portfolio:
-#     st.subheader("Portfolio Optimizer (Modern Portfolio Theory)")
+with tab_portfolio:
+    st.subheader("Portfolio Optimizer (Modern Portfolio Theory)")
 
-#     # --- User Inputs ---
-#     all_tickers = sorted(all_raw['symbol'].dropna().unique())
-#     selected_tickers = st.multiselect(
-#         "Select Holdings (tickers):",
-#         options=all_tickers,
-#         default=["AAPL", "MSFT", "GOOGL"]
-#     )
+    # --- User Inputs ---
+    all_tickers = sorted(all_raw['symbol'].dropna().unique())
+    selected_tickers = st.multiselect(
+        "Select Holdings (tickers):",
+        options=all_tickers,
+        default=["AAPL", "MSFT", "GOOGL"]
+    )
 
-#     goal = st.selectbox(
-#         "Optimization Goal:",
-#         options=[("Max Sharpe Ratio", "Sharpe"), ("Max Return", "Return"), ("Min Volatility", "Volatility")],
-#         format_func=lambda x: x[0]
-#     )
+    goal = st.selectbox(
+        "Optimization Goal:",
+        options=[("Max Sharpe Ratio", "Sharpe"), ("Max Return", "Return"), ("Min Volatility", "Volatility")],
+        format_func=lambda x: x[0]
+    )
 
-#     risk_free = st.text_input("Risk-free rate (annual, decimal, e.g. 0.02):", value="0.02")
-#     years = st.slider("Lookback period (years):", min_value=1, max_value=10, value=3, step=1)
-#     freq = st.selectbox("Return Frequency:", options=[("Monthly (ME)", "ME"), ("Daily", "D")], format_func=lambda x: x[0])
+    risk_free = st.text_input("Risk-free rate (annual, decimal, e.g. 0.02):", value="0.02")
+    years = st.slider("Lookback period (years):", min_value=1, max_value=10, value=3, step=1)
+    freq = st.selectbox("Return Frequency:", options=[("Monthly (ME)", "ME"), ("Daily", "D")], format_func=lambda x: x[0])
 
-#     run_opt = st.button("Run Portfolio Optimizer")
+    run_opt = st.button("Run Portfolio Optimizer")
 
-#     # --- Helper Functions ---
-#     def fetch_prices_fmp(tickers, start_date, end_date, api_key):
-#         price_data = {}
-#         for ticker in tickers:
-#             url = f'https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}?from={start_date}&to={end_date}&apikey={api_key}'
-#             r = requests.get(url)
-#             data = r.json()
-#             if 'historical' in data:
-#                 df = pd.DataFrame(data['historical'])
-#                 df['date'] = pd.to_datetime(df['date'])
-#                 df = df.set_index('date').sort_index()
-#                 price_data[ticker] = df['adjClose']
-#         return pd.DataFrame(price_data)
+    # --- Helper Functions ---
+    def fetch_prices_fmp(tickers, start_date, end_date, api_key):
+        price_data = {}
+        for ticker in tickers:
+            url = f'https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}?from={start_date}&to={end_date}&apikey={api_key}'
+            r = requests.get(url)
+            data = r.json()
+            if 'historical' in data:
+                df = pd.DataFrame(data['historical'])
+                df['date'] = pd.to_datetime(df['date'])
+                df = df.set_index('date').sort_index()
+                price_data[ticker] = df['adjClose']
+        return pd.DataFrame(price_data)
 
-#     def calc_returns_cov(prices, freq='ME'):
-#         if freq == 'ME':
-#             prices = prices.resample('ME').last()
-#         returns = np.log(prices / prices.shift(1)).dropna()
-#         exp_returns = returns.mean() * (12 if freq == 'ME' else 252)
-#         cov_matrix = returns.cov() * (12 if freq == 'ME' else 252)
-#         return exp_returns, cov_matrix
+    def calc_returns_cov(prices, freq='ME'):
+        if freq == 'ME':
+            prices = prices.resample('ME').last()
+        returns = np.log(prices / prices.shift(1)).dropna()
+        exp_returns = returns.mean() * (12 if freq == 'ME' else 252)
+        cov_matrix = returns.cov() * (12 if freq == 'ME' else 252)
+        return exp_returns, cov_matrix
 
-#     def optimise_portfolio(returns, cov, risk_free, goal):
-#         n = len(returns)
-#         bounds = tuple((0, 1) for _ in range(n))
-#         constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+    def optimise_portfolio(returns, cov, risk_free, goal):
+        n = len(returns)
+        bounds = tuple((0, 1) for _ in range(n))
+        constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
 
-#         def portfolio_perf(weights):
-#             port_return = np.dot(weights, returns)
-#             port_vol = np.sqrt(np.dot(weights.T, np.dot(cov, weights)))
-#             sharpe = (port_return - risk_free) / port_vol if port_vol > 0 else 0
-#             return port_return, port_vol, sharpe
+        def portfolio_perf(weights):
+            port_return = np.dot(weights, returns)
+            port_vol = np.sqrt(np.dot(weights.T, np.dot(cov, weights)))
+            sharpe = (port_return - risk_free) / port_vol if port_vol > 0 else 0
+            return port_return, port_vol, sharpe
 
-#         if goal == 'Sharpe':
-#             def neg_sharpe(weights): return -portfolio_perf(weights)[2]
-#             result = minimize(neg_sharpe, n*[1./n], bounds=bounds, constraints=constraints)
-#         elif goal == 'Return':
-#             def neg_return(weights): return -portfolio_perf(weights)[0]
-#             result = minimize(neg_return, n*[1./n], bounds=bounds, constraints=constraints)
-#         elif goal == 'Volatility':
-#             def port_vol(weights): return portfolio_perf(weights)[1]
-#             result = minimize(port_vol, n*[1./n], bounds=bounds, constraints=constraints)
-#         else:
-#             raise ValueError("Unknown goal")
-#         return result
+        if goal == 'Sharpe':
+            def neg_sharpe(weights): return -portfolio_perf(weights)[2]
+            result = minimize(neg_sharpe, n*[1./n], bounds=bounds, constraints=constraints)
+        elif goal == 'Return':
+            def neg_return(weights): return -portfolio_perf(weights)[0]
+            result = minimize(neg_return, n*[1./n], bounds=bounds, constraints=constraints)
+        elif goal == 'Volatility':
+            def port_vol(weights): return portfolio_perf(weights)[1]
+            result = minimize(port_vol, n*[1./n], bounds=bounds, constraints=constraints)
+        else:
+            raise ValueError("Unknown goal")
+        return result
 
-#     # --- Run Optimizer ---
-#     if run_opt:
-#         try:
-#             risk_free_val = float(risk_free)
-#         except Exception:
-#             st.error("Risk-free rate must be a valid number (e.g. 0.02).")
-#             st.stop()
+    # --- Run Optimizer ---
+    if run_opt:
+        try:
+            risk_free_val = float(risk_free)
+        except Exception:
+            st.error("Risk-free rate must be a valid number (e.g. 0.02).")
+            st.stop()
 
-#         if not selected_tickers:
-#             st.warning("Please select at least one ticker.")
-#         else:
-#             st.info(f"Fetching price data for: {selected_tickers}")
-#             end_date = pd.Timestamp.today()
-#             start_date = end_date - pd.Timedelta(days=365*years)
-#             prices = fetch_prices_fmp(selected_tickers, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'), FMP_API_KEY)
-#             if prices.empty or prices.isnull().all().all():
-#                 st.error("No price data found for selected tickers.")
-#             else:
-#                 exp_returns, cov_matrix = calc_returns_cov(prices, freq=freq[1])
-#                 # Check for NaNs or invalid covariance
-#                 if np.any(np.isnan(exp_returns)) or np.any(np.isnan(cov_matrix)) or cov_matrix.shape[0] != len(selected_tickers):
-#                     st.error("Insufficient or invalid price data for optimization. Try different tickers or a longer lookback.")
-#                 else:
-#                     result = optimise_portfolio(exp_returns.values, cov_matrix.values, risk_free_val, goal[1])
-#                     if not result.success:
-#                         st.error(f"Optimization failed: {result.message}")
-#                     else:
-#                         weights = result.x
-#                         st.success("Optimal Portfolio Allocation:")
-#                         alloc_df = pd.DataFrame({
-#                             "Ticker": selected_tickers,
-#                             "Weight": weights
-#                         })
-#                         st.dataframe(alloc_df.style.format({"Weight": "{:.2%}"}))
-#                         fig = px.pie(
-#                             alloc_df,
-#                             names="Ticker",
-#                             values="Weight",
-#                             title=f"Optimal Portfolio Allocation ({goal[0]})",
-#                             hole=0.3
-#                         )
-#                         st.plotly_chart(fig, use_container_width=True)
+        if not selected_tickers:
+            st.warning("Please select at least one ticker.")
+        else:
+            st.info(f"Fetching price data for: {selected_tickers}")
+            end_date = pd.Timestamp.today()
+            start_date = end_date - pd.Timedelta(days=365*years)
+            prices = fetch_prices_fmp(selected_tickers, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'), FMP_API_KEY)
+            if prices.empty or prices.isnull().all().all():
+                st.error("No price data found for selected tickers.")
+            else:
+                exp_returns, cov_matrix = calc_returns_cov(prices, freq=freq[1])
+                # Check for NaNs or invalid covariance
+                if np.any(np.isnan(exp_returns)) or np.any(np.isnan(cov_matrix)) or cov_matrix.shape[0] != len(selected_tickers):
+                    st.error("Insufficient or invalid price data for optimization. Try different tickers or a longer lookback.")
+                else:
+                    result = optimise_portfolio(exp_returns.values, cov_matrix.values, risk_free_val, goal[1])
+                    if not result.success:
+                        st.error(f"Optimization failed: {result.message}")
+                    else:
+                        weights = result.x
+                        st.success("Optimal Portfolio Allocation:")
+                        alloc_df = pd.DataFrame({
+                            "Ticker": selected_tickers,
+                            "Weight": weights
+                        })
+                        st.dataframe(alloc_df.style.format({"Weight": "{:.2%}"}))
+                        fig = px.pie(
+                            alloc_df,
+                            names="Ticker",
+                            values="Weight",
+                            title=f"Optimal Portfolio Allocation ({goal[0]})",
+                            hole=0.3
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
 
 
 
