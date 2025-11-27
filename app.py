@@ -587,8 +587,40 @@ with tab_portfolio:
 
 
 
+
+
+
+# -------------------------
+# CONFIG
+# -------------------------
+st.set_page_config(
+    page_title="Equity Valuation Dashboard",
+    layout="wide",
+)
+
+# -------------------------
+# DATA LOADING
+# -------------------------
+@st.cache_data
+def load_data():
+    sp500_raw = pd.read_csv("sp500_valuations_raw.csv")
+    nasdaq_raw = pd.read_csv("nasdaq100_valuations_raw.csv")
+
+    # Add index label (these weren't in the original CSVs)
+    sp500_raw["index"] = "S&P 500"
+    nasdaq_raw["index"] = "NASDAQ 100"
+
+    all_raw = pd.concat([sp500_raw, nasdaq_raw], ignore_index=True)
+
+    return sp500_raw, nasdaq_raw, all_raw
+
+sp500_raw, nasdaq_raw, all_raw = load_data()
+all_raw.columns = [c.strip() for c in all_raw.columns]
+
+# -------------------------
+# BUFFETT SCREEN FUNCTION
+# -------------------------
 def show_buffett_screen(df):
-    # Ensure numeric
     cols = [
         'roicTTM',
         'returnOnTangibleAssetsTTM',
@@ -600,11 +632,8 @@ def show_buffett_screen(df):
     for col in cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
-
-    # Drop rows with NaN in these columns
     df = df.dropna(subset=cols)
 
-    # Buffett-style hurdles
     criteria = {
         'ROIC (roicTTM)': '> 15%',
         'Return on Tangible Assets (returnOnTangibleAssetsTTM)': '> 10%',
@@ -636,7 +665,6 @@ def show_buffett_screen(df):
     filtered['score'] = filtered[[c for c in filtered.columns if c.endswith('_score')]].sum(axis=1)
     filtered = filtered.sort_values('score',ascending=False)
 
-    # Prepare formatted table
     filtered['Buffett Description'] = filtered.apply(lambda row: (
         f"ROIC: {row['roicTTM']:.2%}, "
         f"Tangible ROA: {row['returnOnTangibleAssetsTTM']:.2%}, "
@@ -663,8 +691,36 @@ def show_buffett_screen(df):
         'capexToOperatingCashFlowTTM': 'Capex/OpCF'
     }), use_container_width=True)
 
-# Example usage in your Streamlit app:
-show_buffett_screen(sp500_raw)
+# -------------------------
+# MAIN LAYOUT WITH BUFFETT TAB
+# -------------------------
+tab_overview, tab_buffett, tab_heatmap, tab_vq, tab_pe_ev, tab_table = st.tabs(
+    ["Overview", "Buffett Screen", "Sector Heatmap", "Value vs Quality", "P/E vs EV/EBITDA", "Data Table"]
+)
+
+with tab_overview:
+    st.subheader("Universe Summary")
+    # ... (your overview code here)
+
+with tab_buffett:
+    show_buffett_screen(sp500_raw)
+
+with tab_heatmap:
+    st.subheader("Sector P/E Heatmap")
+    # ... (your heatmap code here)
+
+with tab_vq:
+    st.subheader("Value vs Quality Scatter")
+    # ... (your value vs quality code here)
+
+with tab_pe_ev:
+    st.subheader("P/E vs EV/EBITDA Scatter")
+    # ... (your P/E vs EV/EBITDA code here)
+
+with tab_table:
+    st.subheader("Underlying Data")
+    # ... (your data table code here)
+
 
 
 
