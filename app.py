@@ -587,6 +587,85 @@ with tab_portfolio:
 
 
 
+def show_buffett_screen(df):
+    # Ensure numeric
+    cols = [
+        'roicTTM',
+        'returnOnTangibleAssetsTTM',
+        'freeCashFlowPerShareTTM',
+        'debtToEquityTTM',
+        'netIncomePerShareTTM',
+        'capexToOperatingCashFlowTTM'
+    ]
+    for col in cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Drop rows with NaN in these columns
+    df = df.dropna(subset=cols)
+
+    # Buffett-style hurdles
+    criteria = {
+        'ROIC (roicTTM)': '> 15%',
+        'Return on Tangible Assets (returnOnTangibleAssetsTTM)': '> 10%',
+        'Free Cash Flow per Share (freeCashFlowPerShareTTM)': f">= {df['freeCashFlowPerShareTTM'].quantile(0.75):.2f} (Top Quartile)",
+        'Debt to Equity (debtToEquityTTM)': '<= 1.0',
+        'Net Income per Share (netIncomePerShareTTM)': f">= {df['netIncomePerShareTTM'].quantile(0.75):.2f} (Top Quartile)",
+        'Capex to Operating Cash Flow (capexToOperatingCashFlowTTM)': '<= 20%'
+    }
+    numeric_criteria = {
+        'roicTTM': 0.15,
+        'returnOnTangibleAssetsTTM': 0.10,
+        'freeCashFlowPerShareTTM': df['freeCashFlowPerShareTTM'].quantile(0.75),
+        'debtToEquityTTM': 1.0,
+        'netIncomePerShareTTM': df['netIncomePerShareTTM'].quantile(0.75),
+        'capexToOperatingCashFlowTTM': 0.2
+    }
+
+    filtered = df.copy()
+    filtered = filtered[filtered['roicTTM'] >= numeric_criteria['roicTTM']]
+    filtered = filtered[filtered['returnOnTangibleAssetsTTM'] >= numeric_criteria['returnOnTangibleAssetsTTM']]
+    filtered = filtered[filtered['freeCashFlowPerShareTTM'] >= numeric_criteria['freeCashFlowPerShareTTM']]
+    filtered = filtered[filtered['debtToEquityTTM'] <= numeric_criteria['debtToEquityTTM']]
+    filtered = filtered[filtered['netIncomePerShareTTM'] >= numeric_criteria['netIncomePerShareTTM']]
+    filtered = filtered[filtered['capexToOperatingCashFlowTTM'] <= numeric_criteria['capexToOperatingCashFlowTTM']]
+
+    # Rank by composite score
+    for col in ['roicTTM','returnOnTangibleAssetsTTM','freeCashFlowPerShareTTM','netIncomePerShareTTM']:
+        filtered[col+'_score'] = (filtered[col]-filtered[col].min())/(filtered[col].max()-filtered[col].min()+1e-9)
+    filtered['score'] = filtered[[c for c in filtered.columns if c.endswith('_score')]].sum(axis=1)
+    filtered = filtered.sort_values('score',ascending=False)
+
+    # Prepare formatted table
+    filtered['Buffett Description'] = filtered.apply(lambda row: (
+        f"ROIC: {row['roicTTM']:.2%}, "
+        f"Tangible ROA: {row['returnOnTangibleAssetsTTM']:.2%}, "
+        f"FCF/Share: {row['freeCashFlowPerShareTTM']:.2f}, "
+        f"Debt/Equity: {row['debtToEquityTTM']:.2f}, "
+        f"Capex/OpCF: {row['capexToOperatingCashFlowTTM']:.2%}"
+    ), axis=1)
+
+    result = filtered[['symbol','name','sector','roicTTM','returnOnTangibleAssetsTTM','freeCashFlowPerShareTTM','debtToEquityTTM','capexToOperatingCashFlowTTM','Buffett Description']].head(5)
+
+    st.markdown("### Buffett Screening Criteria and Hurdles")
+    for metric, hurdle in criteria.items():
+        st.markdown(f"- **{metric}**: {hurdle}")
+
+    st.markdown("### Top 5 Buffett-style Candidates")
+    st.dataframe(result.rename(columns={
+        'symbol': 'Symbol',
+        'name': 'Name',
+        'sector': 'Sector',
+        'roicTTM': 'ROIC',
+        'returnOnTangibleAssetsTTM': 'Tangible ROA',
+        'freeCashFlowPerShareTTM': 'FCF/Share',
+        'debtToEquityTTM': 'Debt/Equity',
+        'capexToOperatingCashFlowTTM': 'Capex/OpCF'
+    }), use_container_width=True)
+
+# Example usage in your Streamlit app:
+# show_buffett_screen(sp500_raw)
+
 
 
 
@@ -603,6 +682,7 @@ with tab_table:
     )
 
     st.caption("Showing first 500 rows for performance. Export from the original CSVs if you need the full dataset.")
+
 
 
 
