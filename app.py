@@ -664,7 +664,7 @@ def show_buffett_screen(df):
     }), use_container_width=True)
 
 # Example usage in your Streamlit app:
-# show_buffett_screen(sp500_raw)
+show_buffett_screen(sp500_raw)
 
 
 
@@ -682,6 +682,7 @@ with tab_table:
     )
 
     st.caption("Showing first 500 rows for performance. Export from the original CSVs if you need the full dataset.")
+
 
 
 
