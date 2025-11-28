@@ -722,7 +722,206 @@ with tab_table:
     # ... (your data table code here)
 
 
+# --- BUFFETT SCREEN TAB ---
+tab_buffett = st.tabs(["Buffett Screen"])[0]
 
+with tab_buffett:
+    st.subheader("What Would Warren Want? (to buy)" \
+    " Stock Screening Tool for SP500")
+
+    # --- Metrics and Default Hurdles ---
+    metrics = {
+        'ROE_min': ('Return on Equity (%)', 0.15),
+        'Debt_to_Equity_max': ('Debt/Equity', 0.5),
+        'Net_Margin_min': ('Net Margin (%)', 0.10),
+        'PE_max': ('P/E Ratio', 20),
+        'ROIC_min': ('ROIC (%)', 0.10),
+        'Current_Ratio_min': ('Current Ratio', 1.5),
+        'Interest_Coverage_min': ('Interest Coverage', 3),
+        'Dividend_Yield_min': ('Dividend Yield (%)', 0.02),
+        'Payout_Ratio_max': ('Payout Ratio (%)', 0.60),
+        'Price_to_Book_max': ('Price/Book', 3),
+        'Capex_to_OCF_max': ('Capex/OCF (%)', 0.20),
+        'Positive_NI': ('Positive Net Income', True)
+    }
+
+    # --- Compute Derived Metrics ---
+    df = df_filtered.copy()
+    shares_outstanding = df['marketCapTTM'] / (df['priceToSalesRatioTTM'] * df['revenuePerShareTTM'])
+    df['net_income'] = df['netIncomePerShareTTM'] * shares_outstanding
+    df['revenue'] = df['revenuePerShareTTM'] * shares_outstanding
+    df['equity'] = df['shareholdersEquityPerShareTTM'] * shares_outstanding
+    df['debt'] = df['interestDebtPerShareTTM'] * shares_outstanding
+
+    df['ROE_calc'] = df['net_income'] / df['equity']
+    df['Debt_to_Equity'] = df['debt'] / df['equity']
+    df['Net_Margin'] = df['net_income'] / df['revenue']
+    df['PE'] = df['peRatioTTM']
+    df['ROIC'] = df['roicTTM']
+    df['Current_Ratio'] = df['currentRatioTTM']
+    df['Interest_Coverage'] = df['interestCoverageTTM']
+    df['Dividend_Yield'] = df['dividendYieldTTM']
+    df['Payout_Ratio'] = df['payoutRatioTTM']
+    df['Price_to_Book'] = df['pbRatioTTM']
+    df['Capex_to_OCF'] = df['capexToOperatingCashFlowTTM']
+    df['Positive_NI'] = df['net_income'] > 0
+
+    # --- Sidebar/Top Controls ---
+    st.markdown("#### Filter & Hurdle Controls")
+    col_search, col_sector = st.columns([2, 2])
+    with col_search:
+        search_term = st.text_input("Search Symbol", "")
+    with col_sector:
+        sector_options = ['All'] + sorted(df['sector'].dropna().unique())
+        sector_filter = st.selectbox("Sector", sector_options)
+
+    # --- Hurdle Controls ---
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        roe_min = st.number_input("ROE min (%)", value=15.0)
+        debt_max = st.number_input("Debt/Equity max", value=0.5)
+        margin_min = st.number_input("Net Margin min (%)", value=10.0)
+        pe_max = st.number_input("PE max", value=20.0)
+    with col2:
+        roic_min = st.number_input("ROIC min (%)", value=10.0)
+        current_min = st.number_input("Current Ratio min", value=1.5)
+        interest_min = st.number_input("Interest Coverage min", value=3.0)
+        dividend_min = st.number_input("Dividend Yield min (%)", value=2.0)
+    with col3:
+        payout_max = st.number_input("Payout Ratio max (%)", value=60.0)
+        pb_max = st.number_input("Price/Book max", value=3.0)
+        capex_max = st.number_input("Capex/OCF max (%)", value=20.0)
+
+    # --- Criteria Dict ---
+    criteria = {
+        'ROE_min': roe_min / 100,
+        'Debt_to_Equity_max': debt_max,
+        'Net_Margin_min': margin_min / 100,
+        'PE_max': pe_max,
+        'ROIC_min': roic_min / 100,
+        'Current_Ratio_min': current_min,
+        'Interest_Coverage_min': interest_min,
+        'Dividend_Yield_min': dividend_min / 100,
+        'Payout_Ratio_max': payout_max / 100,
+        'Price_to_Book_max': pb_max,
+        'Capex_to_OCF_max': capex_max / 100,
+        'Positive_NI': True
+    }
+
+    # --- Filtering ---
+    filtered_df = df.copy()
+    if search_term:
+        filtered_df = filtered_df[filtered_df['symbol'].str.contains(search_term, case=False, na=False)]
+    if sector_filter != 'All':
+        filtered_df = filtered_df[filtered_df['sector'] == sector_filter]
+
+    # --- Table Generation ---
+    def create_html_table(criteria, filtered_df):
+        tick = '✅'
+        cross = '❌'
+        html = '<table style="border-collapse: collapse; width: 100%;">'
+        html += '<tr style="background-color:#f2f2f2;">'
+        html += '<th style="border:1px solid #ccc; padding:5px;">Company</th>'
+        for metric in metrics.keys():
+            html += f'<th style="border:1px solid #ccc; padding:5px;">{metrics[metric][0]}</th>'
+        html += '<th style="border:1px solid #ccc; padding:5px;">Hurdles Met</th>'
+        html += '</tr>'
+
+        # Calculate pass counts
+        pass_counts = []
+        for i, row in filtered_df.iterrows():
+            count = 0
+            for metric in metrics.keys():
+                if metric == 'ROE_min':
+                    passed = row['ROE_calc'] >= criteria[metric]
+                elif metric == 'Debt_to_Equity_max':
+                    passed = row['Debt_to_Equity'] <= criteria[metric]
+                elif metric == 'Net_Margin_min':
+                    passed = row['Net_Margin'] >= criteria[metric]
+                elif metric == 'PE_max':
+                    passed = row['PE'] <= criteria[metric]
+                elif metric == 'ROIC_min':
+                    passed = row['ROIC'] >= criteria[metric]
+                elif metric == 'Current_Ratio_min':
+                    passed = row['Current_Ratio'] >= criteria[metric]
+                elif metric == 'Interest_Coverage_min':
+                    passed = row['Interest_Coverage'] >= criteria[metric]
+                elif metric == 'Dividend_Yield_min':
+                    passed = row['Dividend_Yield'] >= criteria[metric]
+                elif metric == 'Payout_Ratio_max':
+                    passed = row['Payout_Ratio'] <= criteria[metric]
+                elif metric == 'Price_to_Book_max':
+                    passed = row['Price_to_Book'] <= criteria[metric]
+                elif metric == 'Capex_to_OCF_max':
+                    passed = row['Capex_to_OCF'] <= criteria[metric]
+                elif metric == 'Positive_NI':
+                    passed = row['Positive_NI']
+                if passed:
+                    count += 1
+            pass_counts.append(count)
+
+        # Sort by pass count
+        sorted_indices = sorted(range(len(pass_counts)), key=lambda i: pass_counts[i], reverse=True)
+
+        for idx in sorted_indices:
+            row = filtered_df.iloc[idx]
+            html += '<tr>'
+            html += f'<td style="border:1px solid #ccc; padding:5px;">{row["symbol"]}</td>'
+            count = 0
+            for metric in metrics.keys():
+                if metric == 'ROE_min':
+                    value = row['ROE_calc'] * 100
+                    passed = row['ROE_calc'] >= criteria[metric]
+                elif metric == 'Debt_to_Equity_max':
+                    value = row['Debt_to_Equity']
+                    passed = value <= criteria[metric]
+                elif metric == 'Net_Margin_min':
+                    value = row['Net_Margin'] * 100
+                    passed = row['Net_Margin'] >= criteria[metric]
+                elif metric == 'PE_max':
+                    value = row['PE']
+                    passed = value <= criteria[metric]
+                elif metric == 'ROIC_min':
+                    value = row['ROIC'] * 100
+                    passed = row['ROIC'] >= criteria[metric]
+                elif metric == 'Current_Ratio_min':
+                    value = row['Current_Ratio']
+                    passed = value >= criteria[metric]
+                elif metric == 'Interest_Coverage_min':
+                    value = row['Interest_Coverage']
+                    passed = value >= criteria[metric]
+                elif metric == 'Dividend_Yield_min':
+                    value = row['Dividend_Yield'] * 100
+                    passed = row['Dividend_Yield'] >= criteria[metric]
+                elif metric == 'Payout_Ratio_max':
+                    value = row['Payout_Ratio'] * 100
+                    passed = row['Payout_Ratio'] <= criteria[metric]
+                elif metric == 'Price_to_Book_max':
+                    value = row['Price_to_Book']
+                    passed = value <= criteria[metric]
+                elif metric == 'Capex_to_OCF_max':
+                    value = row['Capex_to_OCF'] * 100
+                    passed = row['Capex_to_OCF'] <= criteria[metric]
+                elif metric == 'Positive_NI':
+                    value = row['net_income']
+                    passed = row['Positive_NI']
+
+                color = '#d4edda' if passed else '#f8d7da'
+                symbol = '✅' if passed else '❌'
+                tooltip = f"Metric value: {round(value,2)}"
+                html += f'<td style="border:1px solid #ccc; padding:5px; background-color:{color};" title="{tooltip}">{symbol}</td>'
+                if passed:
+                    count += 1
+            html += f'<td style="border:1px solid #ccc; padding:5px; font-weight:bold;">{count}</td>'
+            html += '</tr>'
+        html += '</table>'
+        return html
+
+    # --- Show Table ---
+    st.markdown(
+        create_html_table(criteria, filtered_df),
+        unsafe_allow_html=True
+    )
 
 
 # -------------------------
@@ -738,6 +937,7 @@ with tab_table:
     )
 
     st.caption("Showing first 500 rows for performance. Export from the original CSVs if you need the full dataset.")
+
 
 
 
