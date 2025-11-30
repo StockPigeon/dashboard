@@ -693,7 +693,7 @@ def show_buffett_screen(df):
 
 
 
-# --- BUFFETT SCREEN TAB (UPDATED) ---
+# --- BUFFETT SCREEN TAB ---
 tab_buffett = st.tabs(["Buffett Screen"])[0]
 
 with tab_buffett:
@@ -701,18 +701,18 @@ with tab_buffett:
 
     # --- Metrics and Default Hurdles ---
     metrics = {
-        'ROE_min': ('Return on Equity (%)', 0.15),
-        'Debt_to_Equity_max': ('Debt/Equity', 0.5),
-        'Net_Margin_min': ('Net Margin (%)', 0.10),
-        'PE_max': ('P/E Ratio', 20),
-        'ROIC_min': ('ROIC (%)', 0.10),
-        'Current_Ratio_min': ('Current Ratio', 1.5),
-        'Interest_Coverage_min': ('Interest Coverage', 3),
-        'Dividend_Yield_min': ('Dividend Yield (%)', 0.02),
-        'Payout_Ratio_max': ('Payout Ratio (%)', 0.60),
-        'Price_to_Book_max': ('Price/Book', 3),
-        'Capex_to_OCF_max': ('Capex/OCF (%)', 0.20),
-        'Positive_NI': ('Positive Net Income', True)
+        'ROE_min': ('Return on Equity (%)', 0.15, 'higher', 'ROE_calc'),
+        'Debt_to_Equity_max': ('Debt/Equity', 0.5, 'lower', 'Debt_to_Equity'),
+        'Net_Margin_min': ('Net Margin (%)', 0.10, 'higher', 'Net_Margin'),
+        'PE_max': ('P/E Ratio', 20, 'lower', 'PE'),
+        'ROIC_min': ('ROIC (%)', 0.10, 'higher', 'ROIC'),
+        'Current_Ratio_min': ('Current Ratio', 1.5, 'higher', 'Current_Ratio'),
+        'Interest_Coverage_min': ('Interest Coverage', 3, 'higher', 'Interest_Coverage'),
+        'Dividend_Yield_min': ('Dividend Yield (%)', 0.02, 'higher', 'Dividend_Yield'),
+        'Payout_Ratio_max': ('Payout Ratio (%)', 0.60, 'lower', 'Payout_Ratio'),
+        'Price_to_Book_max': ('Price/Book', 3, 'lower', 'Price_to_Book'),
+        'Capex_to_OCF_max': ('Capex/OCF (%)', 0.20, 'lower', 'Capex_to_OCF'),
+        'Positive_NI': ('Positive Net Income', True, 'higher', 'Positive_NI')
     }
 
     # --- Compute Derived Metrics ---
@@ -736,7 +736,7 @@ with tab_buffett:
     df['Capex_to_OCF'] = df['capexToOperatingCashFlowTTM']
     df['Positive_NI'] = df['net_income'] > 0
 
-    # --- Sidebar/Top Controls ---
+    # --- Controls ---
     st.markdown("#### Filter & Hurdle Controls")
     col_search, col_sector = st.columns([2, 2])
     with col_search:
@@ -745,20 +745,15 @@ with tab_buffett:
         sector_options = ['All'] + sorted(df['sector'].dropna().unique())
         sector_filter = st.selectbox("Sector", sector_options)
 
-    # --- Metric Selection ---
-    all_metric_keys = list(metrics.keys())
-    metric_labels = [metrics[k][0] for k in all_metric_keys]
-    metric_key_to_label = dict(zip(all_metric_keys, metric_labels))
-    metric_label_to_key = dict(zip(metric_labels, all_metric_keys))
-
-    selected_labels = st.multiselect(
-        "Select metrics to display",
-        options=metric_labels,
-        default=metric_labels
-    )
+    # Metric selection
+    metric_labels = [metrics[k][0] for k in metrics.keys()]
+    metric_label_to_key = dict(zip(metric_labels, metrics.keys()))
+    selected_labels = st.multiselect("Select metrics to display", options=metric_labels, default=metric_labels)
     selected_metrics = [metric_label_to_key[lbl] for lbl in selected_labels]
 
-    # --- Hurdle Controls ---
+    exclude_non_pass = st.checkbox("Only show companies that meet all displayed metric hurdles", value=False)
+
+    # --- Hurdle Inputs ---
     col1, col2, col3 = st.columns(3)
     with col1:
         roe_min = st.number_input("ROE min (%)", value=15.0)
@@ -775,7 +770,6 @@ with tab_buffett:
         pb_max = st.number_input("Price/Book max", value=3.0)
         capex_max = st.number_input("Capex/OCF max (%)", value=20.0)
 
-    # --- Criteria Dict ---
     criteria = {
         'ROE_min': roe_min / 100,
         'Debt_to_Equity_max': debt_max,
@@ -791,120 +785,52 @@ with tab_buffett:
         'Positive_NI': True
     }
 
-    # --- Filtering ---
+    # Apply search and sector filter
     filtered_df = df.copy()
     if search_term:
         filtered_df = filtered_df[filtered_df['symbol'].str.contains(search_term, case=False, na=False)]
     if sector_filter != 'All':
         filtered_df = filtered_df[filtered_df['sector'] == sector_filter]
 
-    # --- Table Generation ---
-    def create_html_table(criteria, filtered_df, selected_metrics):
-        tick = '✅'
-        cross = '❌'
-        html = '<table style="border-collapse: collapse; width: 100%;">'
-        html += '<tr style="background-color:#f2f2f2;">'
-        html += '<th style="border:1px solid #ccc; padding:5px;">Company</th>'
-        for metric in selected_metrics:
-            html += f'<th style="border:1px solid #ccc; padding:5px;">{metrics[metric][0]}</th>'
-        html += '<th style="border:1px solid #ccc; padding:5px;">Hurdles Met</th>'
-        html += '</tr>'
+    # --- Scoring ---
+    scores = pd.DataFrame(index=filtered_df.index)
+    for key in selected_metrics:
+        col_name = metrics[key][3]
+        direction = metrics[key][2]
+        vals = filtered_df[col_name].astype(float) if key != 'Positive_NI' else filtered_df['Positive_NI'].astype(int)
+        ascending = True if direction == 'lower' else False
+        scores[key] = vals.rank(ascending=ascending, method='min')
+    scores['Total_Score'] = scores.sum(axis=1)
 
-        # Calculate pass counts
-        pass_counts = []
-        for i, row in filtered_df.iterrows():
-            count = 0
-            for metric in metrics.keys():
-                if metric == 'ROE_min':
-                    passed = row['ROE_calc'] >= criteria[metric]
-                elif metric == 'Debt_to_Equity_max':
-                    passed = row['Debt_to_Equity'] <= criteria[metric]
-                elif metric == 'Net_Margin_min':
-                    passed = row['Net_Margin'] >= criteria[metric]
-                elif metric == 'PE_max':
-                    passed = row['PE'] <= criteria[metric]
-                elif metric == 'ROIC_min':
-                    passed = row['ROIC'] >= criteria[metric]
-                elif metric == 'Current_Ratio_min':
-                    passed = row['Current_Ratio'] >= criteria[metric]
-                elif metric == 'Interest_Coverage_min':
-                    passed = row['Interest_Coverage'] >= criteria[metric]
-                elif metric == 'Dividend_Yield_min':
-                    passed = row['Dividend_Yield'] >= criteria[metric]
-                elif metric == 'Payout_Ratio_max':
-                    passed = row['Payout_Ratio'] <= criteria[metric]
-                elif metric == 'Price_to_Book_max':
-                    passed = row['Price_to_Book'] <= criteria[metric]
-                elif metric == 'Capex_to_OCF_max':
-                    passed = row['Capex_to_OCF'] <= criteria[metric]
-                elif metric == 'Positive_NI':
-                    passed = row['Positive_NI']
-                if passed:
-                    count += 1
-            pass_counts.append(count)
+    # Exclude non-pass if requested
+    def passes_all(row):
+        for key in selected_metrics:
+            col_name = metrics[key][3]
+            val = row[col_name]
+            if key.endswith('_min') and val < criteria[key]: return False
+            if key.endswith('_max') and val > criteria[key]: return False
+            if key == 'Positive_NI' and not val: return False
+        return True
 
-        # Sort by pass count
-        sorted_indices = sorted(range(len(pass_counts)), key=lambda i: pass_counts[i], reverse=True)
+    if exclude_non_pass:
+        filtered_df = filtered_df[filtered_df.apply(passes_all, axis=1)]
+        scores = scores.loc[filtered_df.index]
 
-        for idx in sorted_indices:
-            row = filtered_df.iloc[idx]
-            html += '<tr>'
-            html += f'<td style="border:1px solid #ccc; padding:5px;">{row["symbol"]}</td>'
-            count = 0
-            for metric in selected_metrics:
-                if metric == 'ROE_min':
-                    value = row['ROE_calc'] * 100
-                    passed = row['ROE_calc'] >= criteria[metric]
-                elif metric == 'Debt_to_Equity_max':
-                    value = row['Debt_to_Equity']
-                    passed = value <= criteria[metric]
-                elif metric == 'Net_Margin_min':
-                    value = row['Net_Margin'] * 100
-                    passed = row['Net_Margin'] >= criteria[metric]
-                elif metric == 'PE_max':
-                    value = row['PE']
-                    passed = value <= criteria[metric]
-                elif metric == 'ROIC_min':
-                    value = row['ROIC'] * 100
-                    passed = row['ROIC'] >= criteria[metric]
-                elif metric == 'Current_Ratio_min':
-                    value = row['Current_Ratio']
-                    passed = value >= criteria[metric]
-                elif metric == 'Interest_Coverage_min':
-                    value = row['Interest_Coverage']
-                    passed = value >= criteria[metric]
-                elif metric == 'Dividend_Yield_min':
-                    value = row['Dividend_Yield'] * 100
-                    passed = row['Dividend_Yield'] >= criteria[metric]
-                elif metric == 'Payout_Ratio_max':
-                    value = row['Payout_Ratio'] * 100
-                    passed = row['Payout_Ratio'] <= criteria[metric]
-                elif metric == 'Price_to_Book_max':
-                    value = row['Price_to_Book']
-                    passed = value <= criteria[metric]
-                elif metric == 'Capex_to_OCF_max':
-                    value = row['Capex_to_OCF'] * 100
-                    passed = row['Capex_to_OCF'] <= criteria[metric]
-                elif metric == 'Positive_NI':
-                    value = row['net_income']
-                    passed = row['Positive_NI']
+    # --- Build DataFrame for Streamlit ---
+    display_df = pd.DataFrame(index=filtered_df.index)
+    display_df['Symbol'] = filtered_df['symbol']
+    for key in selected_metrics:
+        col_name = metrics[key][3]
+        vals = filtered_df[col_name]
+        display_df[metrics[key][0]] = vals.apply(
+            lambda v: f"✅ {v:.2f}" if (v >= 0 and ((key.endswith('_min') and v >= criteria[key]) or (key.endswith('_max') and v <= criteria[key]) or (key == 'Positive_NI' and v))) else f"❌ {v:.2f}" if isinstance(v, (int, float)) else f"❌ {v}"
+        )
+    display_df['Total Score'] = scores['Total_Score']
 
-                color = '#d4edda' if passed else '#f8d7da'
-                symbol = '✅' if passed else '❌'
-                tooltip = f"Metric value: {round(value,2)}"
-                html += f'<td style="border:1px solid #ccc; padding:5px; background-color:{color};" title="{tooltip}">{symbol}</td>'
-                if passed:
-                    count += 1
-            html += f'<td style="border:1px solid #ccc; padding:5px; font-weight:bold;">{count}</td>'
-            html += '</tr>'
-        html += '</table>'
-        return html
+    # --- Show sortable table ---
+    st.dataframe(display_df.sort_values('Total Score'), use_container_width=True)
 
-    # --- Show Table ---
-    st.markdown(
-        create_html_table(criteria, filtered_df, selected_metrics),
-        unsafe_allow_html=True
-    )
+
 
 
 
@@ -1095,6 +1021,7 @@ with tab_table:
     )
 
     st.caption("Showing first 500 rows for performance. Export from the original CSVs if you need the full dataset.")
+
 
 
 
