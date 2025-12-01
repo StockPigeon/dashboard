@@ -694,6 +694,7 @@ def show_buffett_screen(df):
 
 
 
+
 # --- BUFFETT SCREEN TAB ---
 tab_buffett = st.tabs(["Buffett Screen"])[0]
 
@@ -739,17 +740,27 @@ with tab_buffett:
 
     # --- Controls ---
     st.markdown("#### Filter & Hurdle Controls")
-    col_manual, col_sector = st.columns([2, 2])
-    with col_manual:
-        manual_selection = st.multiselect(
-            "Select companies (optional)",
-            options=sorted(df['symbol'].unique()),
-            default=[]
-        )
-    with col_sector:
-        sector_options = ['All'] + sorted(df['sector'].dropna().unique())
-        sector_filter = st.selectbox("Sector", sector_options)
 
+    # Sector filter first
+    sector_options = ['All'] + sorted(df['sector'].dropna().unique())
+    sector_filter = st.selectbox("Sector", sector_options)
+
+    # Filter tickers based on sector
+    if sector_filter != 'All':
+        sector_df = df[df['sector'] == sector_filter]
+    else:
+        sector_df = df
+
+    all_tickers = sorted(sector_df['symbol'].dropna().unique())
+
+    # Manual selection with default = all tickers in sector
+    selected_tickers = st.multiselect(
+        "Select Holdings (tickers):",
+        options=all_tickers,
+        default=all_tickers  # Default is all companies in sector
+    )
+
+    # Metric selection
     metric_labels = [metrics[k][0] for k in metrics.keys()]
     metric_label_to_key = dict(zip(metric_labels, metrics.keys()))
     selected_labels = st.multiselect("Select metrics to display", options=metric_labels, default=metric_labels)
@@ -789,12 +800,8 @@ with tab_buffett:
         'Positive_NI': True
     }
 
-    # Apply filters
-    filtered_df = df.copy()
-    if sector_filter != 'All':
-        filtered_df = filtered_df[filtered_df['sector'] == sector_filter]
-    if manual_selection:
-        filtered_df = filtered_df[filtered_df['symbol'].isin(manual_selection)]
+    # Apply sector and ticker filters
+    filtered_df = df[df['symbol'].isin(selected_tickers)]
 
     # --- Scoring ---
     scores = pd.DataFrame(index=filtered_df.index)
@@ -833,7 +840,6 @@ with tab_buffett:
 
     # --- Show sortable table ---
     st.dataframe(display_df.sort_values('Total Score'), use_container_width=True)
-
 
 
 
@@ -1034,6 +1040,7 @@ with tab_table:
     )
 
     st.caption("Showing first 500 rows for performance. Export from the original CSVs if you need the full dataset.")
+
 
 
 
