@@ -869,6 +869,7 @@ with tab_table:
     # ... (your data table code here)
 
 
+
 # --- BUFFETT SCREEN TAB ---
 tab_buffett = st.tabs(["Buffett Screen"])[0]
 
@@ -929,6 +930,10 @@ with tab_buffett:
 
     exclude_non_pass = st.checkbox("Only show companies that meet all displayed metric hurdles", value=False)
 
+    # Manual company selection
+    st.markdown("#### Manual Company Selection")
+    manual_selection = st.multiselect("Select specific companies (optional)", options=df['symbol'].tolist())
+
     # --- Hurdle Inputs ---
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -967,6 +972,10 @@ with tab_buffett:
         filtered_df = filtered_df[filtered_df['symbol'].str.contains(search_term, case=False, na=False)]
     if sector_filter != 'All':
         filtered_df = filtered_df[filtered_df['sector'] == sector_filter]
+
+    # Apply manual selection if provided
+    if manual_selection:
+        filtered_df = filtered_df[filtered_df['symbol'].isin(manual_selection)]
 
     # --- Scoring ---
     scores = pd.DataFrame(index=filtered_df.index)
@@ -1008,6 +1017,7 @@ with tab_buffett:
 
 
 
+
 # -------------------------
 # DATA TABLE TAB
 # -------------------------
@@ -1021,6 +1031,7 @@ with tab_table:
     )
 
     st.caption("Showing first 500 rows for performance. Export from the original CSVs if you need the full dataset.")
+
 
 
 
