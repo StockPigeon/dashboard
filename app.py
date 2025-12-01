@@ -870,6 +870,7 @@ with tab_table:
 
 
 
+
 # --- BUFFETT SCREEN TAB ---
 tab_buffett = st.tabs(["Buffett Screen"])[0]
 
@@ -917,7 +918,12 @@ with tab_buffett:
     st.markdown("#### Filter & Hurdle Controls")
     col_search, col_sector = st.columns([2, 2])
     with col_search:
-        search_term = st.text_input("Search Symbol", "")
+        # Replace text input with multiselect for S&P 500 companies
+        manual_selection = st.multiselect(
+            "Select companies (optional)",
+            options=sorted(df['symbol'].unique()),
+            default=[]
+        )
     with col_sector:
         sector_options = ['All'] + sorted(df['sector'].dropna().unique())
         sector_filter = st.selectbox("Sector", sector_options)
@@ -929,10 +935,6 @@ with tab_buffett:
     selected_metrics = [metric_label_to_key[lbl] for lbl in selected_labels]
 
     exclude_non_pass = st.checkbox("Only show companies that meet all displayed metric hurdles", value=False)
-
-    # Manual company selection
-    st.markdown("#### Manual Company Selection")
-    manual_selection = st.multiselect("Select specific companies (optional)", options=df['symbol'].tolist())
 
     # --- Hurdle Inputs ---
     col1, col2, col3 = st.columns(3)
@@ -966,10 +968,8 @@ with tab_buffett:
         'Positive_NI': True
     }
 
-    # Apply search and sector filter
+    # Apply sector filter
     filtered_df = df.copy()
-    if search_term:
-        filtered_df = filtered_df[filtered_df['symbol'].str.contains(search_term, case=False, na=False)]
     if sector_filter != 'All':
         filtered_df = filtered_df[filtered_df['sector'] == sector_filter]
 
@@ -1018,6 +1018,7 @@ with tab_buffett:
 
 
 
+
 # -------------------------
 # DATA TABLE TAB
 # -------------------------
@@ -1031,6 +1032,7 @@ with tab_table:
     )
 
     st.caption("Showing first 500 rows for performance. Export from the original CSVs if you need the full dataset.")
+
 
 
 
