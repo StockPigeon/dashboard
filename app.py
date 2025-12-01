@@ -693,6 +693,7 @@ def show_buffett_screen(df):
 
 
 
+
 # --- BUFFETT SCREEN TAB ---
 tab_buffett = st.tabs(["Buffett Screen"])[0]
 
@@ -738,14 +739,17 @@ with tab_buffett:
 
     # --- Controls ---
     st.markdown("#### Filter & Hurdle Controls")
-    col_search, col_sector = st.columns([2, 2])
-    with col_search:
-        search_term = st.text_input("Search Symbol", "")
+    col_manual, col_sector = st.columns([2, 2])
+    with col_manual:
+        manual_selection = st.multiselect(
+            "Select companies (optional)",
+            options=sorted(df['symbol'].unique()),
+            default=[]
+        )
     with col_sector:
         sector_options = ['All'] + sorted(df['sector'].dropna().unique())
         sector_filter = st.selectbox("Sector", sector_options)
 
-    # Metric selection
     metric_labels = [metrics[k][0] for k in metrics.keys()]
     metric_label_to_key = dict(zip(metric_labels, metrics.keys()))
     selected_labels = st.multiselect("Select metrics to display", options=metric_labels, default=metric_labels)
@@ -785,12 +789,12 @@ with tab_buffett:
         'Positive_NI': True
     }
 
-    # Apply search and sector filter
+    # Apply filters
     filtered_df = df.copy()
-    if search_term:
-        filtered_df = filtered_df[filtered_df['symbol'].str.contains(search_term, case=False, na=False)]
     if sector_filter != 'All':
         filtered_df = filtered_df[filtered_df['sector'] == sector_filter]
+    if manual_selection:
+        filtered_df = filtered_df[filtered_df['symbol'].isin(manual_selection)]
 
     # --- Scoring ---
     scores = pd.DataFrame(index=filtered_df.index)
@@ -829,8 +833,6 @@ with tab_buffett:
 
     # --- Show sortable table ---
     st.dataframe(display_df.sort_values('Total Score'), use_container_width=True)
-
-
 
 
 
@@ -1032,6 +1034,7 @@ with tab_table:
     )
 
     st.caption("Showing first 500 rows for performance. Export from the original CSVs if you need the full dataset.")
+
 
 
 
