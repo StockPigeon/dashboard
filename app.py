@@ -6,6 +6,9 @@ import plotly.express as px
 from scipy.optimize import minimize
 import requests
 
+# NEW: import your dynamic global dataset
+from update_data import load_global_data
+
 # -------------------------
 # CONFIG
 # -------------------------
@@ -15,24 +18,89 @@ st.set_page_config(
 )
 
 # -------------------------
-# DATA LOADING
+# LOAD GLOBAL DATA
 # -------------------------
-@st.cache_data
-def load_data():
-    sp500_raw = pd.read_csv("sp500_valuations_raw.csv")
-    nasdaq_raw = pd.read_csv("nasdaq100_valuations_raw.csv")
+@st.cache_data(show_spinner=True)
+def load_universe():
+    global_data = load_global_data()  # dict: index → df
+    dfs = []
 
-    # Add index label (these weren't in the original CSVs)
-    sp500_raw["index"] = "S&P 500"
-    nasdaq_raw["index"] = "NASDAQ 100"
+    for index_name, df in global_data.items():
+        if df is None or df.empty:
+            continue
 
-    all_raw = pd.concat([sp500_raw, nasdaq_raw], ignore_index=True)
-    return sp500_raw, nasdaq_raw, all_raw
+        df = df.copy()
+
+        # Ensure symbol upper-case
+        df["symbol"] = df["symbol"].astype(str).str.upper()
+
+        # Ensure sector column exists
+        if "sector" not in df.columns:
+            df["sector"] = "Unknown"
+
+        # Ensure name column exists (some ETFs do not return it)
+        if "name" not in df.columns:
+            df["name"] = df["symbol"]
+
+        # Add index label
+        df["index"] = index_name
+
+        dfs.append(df)
+
+    # Combine all indices into a single universe
+    all_raw = pd.concat(dfs, ignore_index=True)
+    all_raw.columns = [c.strip() for c in all_raw.columns]
+
+    return global_data, all_raw
 
 
-sp500_raw, nasdaq_raw, all_raw = load_data()
-# Ensure consistent types / column names
-all_raw.columns = [c.strip() for c in all_raw.columns]
+
+global_data, all_raw = load_universe()
+
+# ---------------------------------------------
+# SIDEBAR INDEX SELECTION (dynamic, global)
+# ---------------------------------------------
+all_indices = list(global_data.keys())
+
+# Default selection = S&P 500 + ASX 200 only
+default_selection = []
+for ix in ["S&P 500", "ASX 200"]:
+    if ix in all_indices:
+        default_selection.append(ix)
+
+index_filter = st.sidebar.multiselect(
+    "Index",
+    options=all_indices,
+    default=default_selection
+)
+
+
+# The rest of your existing sidebar
+sector_options = sorted(all_raw["sector"].dropna().unique())
+sector_filter = st.sidebar.multiselect(
+    "Sector (optional filter)",
+    options=sector_options,
+    default=[],
+    key="sector_filter_main"
+)
+
+show_cap_100 = st.sidebar.checkbox(
+    "Cap multiples at 100 (P/E & EV/EBITDA)", 
+    value=False,
+    key="cap_multiples_checkbox"
+)
+
+
+# ---------------------------------------------
+# FILTER UNIVERSE
+# ---------------------------------------------
+df_filtered = all_raw.copy()
+
+if index_filter:
+    df_filtered = df_filtered[df_filtered["index"].isin(index_filter)]
+
+if sector_filter:
+    df_filtered = df_filtered[df_filtered["sector"].isin(sector_filter)]
 
 # -------------------------
 # HELPER FUNCTIONS
@@ -246,30 +314,30 @@ def optimise_portfolio(returns, cov, risk_free, goal):
     return result, portfolio_perf
 
 
-# -------------------------
-# SIDEBAR FILTERS
-# -------------------------
-st.sidebar.title("Controls")
+# # -------------------------
+# # SIDEBAR FILTERS
+# # -------------------------
+# st.sidebar.title("Controls")
 
-index_filter = st.sidebar.multiselect(
-    "Index",
-    options=["S&P 500", "NASDAQ 100"],
-    default=["S&P 500", "NASDAQ 100"],
-)
+# index_filter = st.sidebar.multiselect(
+#     "Index",
+#     options=["S&P 500", "NASDAQ 100"],
+#     default=["S&P 500", "NASDAQ 100"],
+# )
 
-sector_options = sorted(all_raw["sector"].dropna().unique())
-sector_filter = st.sidebar.multiselect(
-    "Sector (optional filter)",
-    options=sector_options,
-    default=[],
-)
+# sector_options = sorted(all_raw["sector"].dropna().unique())
+# sector_filter = st.sidebar.multiselect(
+#     "Sector (optional filter)",
+#     options=sector_options,
+#     default=[],
+# )
 
-show_cap_100 = st.sidebar.checkbox(
-    "Cap multiples at 100 (P/E & EV/EBITDA)", value=False
-)
+# show_cap_100 = st.sidebar.checkbox(
+#     "Cap multiples at 100 (P/E & EV/EBITDA)", value=False
+# )
 
-st.sidebar.markdown("---")
-st.sidebar.caption("CSV files must be in the same folder as app.py")
+# st.sidebar.markdown("---")
+# st.sidebar.caption("CSV files must be in the same folder as app.py")
 
 # Apply filters
 df_filtered = all_raw.copy()
