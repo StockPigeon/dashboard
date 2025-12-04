@@ -57,6 +57,7 @@ def load_universe():
 
 global_data, all_raw = load_universe()
 
+
 # ---------------------------------------------
 # SIDEBAR INDEX SELECTION (dynamic, global)
 # ---------------------------------------------
@@ -101,6 +102,8 @@ if index_filter:
 
 if sector_filter:
     df_filtered = df_filtered[df_filtered["sector"].isin(sector_filter)]
+
+print(df_filtered.head)
 
 # -------------------------
 # HELPER FUNCTIONS
@@ -468,6 +471,7 @@ with tab_vq:
             ],
             default=[],
         )
+
         df_plot = df_vq.copy()
         if quad_filter:
             df_plot = df_plot[df_plot["quadrant"].isin(quad_filter)]
@@ -489,6 +493,22 @@ with tab_vq:
             opacity=0.7,
             title="Value vs Quality – factor-style view",
         )
+
+        # --- NEW: de-duplicate legend so it only shows quadrants ---
+        seen_quadrants = set()
+        for trace in fig_vq.data:
+            # trace.name will look like "Cheap & Quality, S&P 500"
+            quad_name = trace.name.split(",")[0].strip()
+
+            trace.legendgroup = quad_name  # group by quadrant
+
+            if quad_name in seen_quadrants:
+                trace.showlegend = False   # hide duplicate
+            else:
+                trace.name = quad_name     # show just the quadrant name
+                trace.showlegend = True
+                seen_quadrants.add(quad_name)
+        # -----------------------------------------------------------
 
         fig_vq.add_vline(x=0, line_dash="dash", line_width=1)
         fig_vq.add_hline(y=0, line_dash="dash", line_width=1)

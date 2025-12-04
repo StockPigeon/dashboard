@@ -10,6 +10,7 @@ import streamlit as st
 FMP_API_KEY = st.secrets["FMP_API_KEY"]
 ETF_BASE = "https://financialmodelingprep.com/stable/etf/holdings"
 BULK_METRICS_URL = "https://financialmodelingprep.com/stable/key-metrics-ttm-bulk"
+RATIOS_TTM_BULK_URL = "https://financialmodelingprep.com/stable/ratios-ttm-bulk"
 
 
 # --------------------------------------------------------------
@@ -80,6 +81,25 @@ def load_bulk_profiles():
 
     return profiles
 
+@st.cache_data(show_spinner=False)
+def load_bulk_ratios_ttm():
+    """
+    Loads TTM valuation / financial ratios for ALL symbols from the FMP
+    Ratios TTM Bulk endpoint (CSV).
+    """
+    url = f"{RATIOS_TTM_BULK_URL}?apikey={FMP_API_KEY}"
+    df = pd.read_csv(url)
+
+    # Clean columns
+    df.columns = [c.strip() for c in df.columns]
+
+    # Standardise symbol
+    if "symbol" in df.columns:
+        df["symbol"] = df["symbol"].astype(str).str.upper()
+    else:
+        df["symbol"] = None  # just in case, but normally it's there
+
+    return df
 
 
 
@@ -177,14 +197,39 @@ INDEX_ETF_MAP = {
 def load_global_data():
     """Runs once per session or when the cache invalidates (daily/hourly/etc.)"""
 
+    # --- Load base datasets ---
     bulk = load_bulk_key_metrics()
+    ratios = load_bulk_ratios_ttm()
     profiles = load_bulk_profiles()
 
     # Build lookup dictionaries
     sector_map = profiles.set_index("symbol")["sector"].to_dict()
     name_map = profiles.set_index("symbol")["companyName"].to_dict()
 
-    # Standardize metric names coming from bulk endpoint
+    # --- Bring in the key valuation ratios from ratios-ttm-bulk ---
+    # FMP typically uses names like priceEarningsRatioTTM, priceToBookRatioTTM, priceToSalesRatioTTM
+    ratio_cols_to_keep = [
+        "symbol",
+        "priceEarningsRatioTTM",  # we'll map this to peRatioTTM
+        "priceToBookRatioTTM",
+        "priceToSalesRatioTTM",
+    ]
+    ratio_cols_to_keep = [c for c in ratio_cols_to_keep if c in ratios.columns]
+
+    ratios_small = ratios[ratio_cols_to_keep].copy()
+
+    # Normalise P/E name to what your scoring function expects
+    ratios_small = ratios_small.rename(
+        columns={
+            "priceEarningsRatioTTM": "peRatioTTM",
+            # the others already match what you use: priceToBookRatioTTM, priceToSalesRatioTTM
+        }
+    )
+
+    # Merge ratios into bulk key metrics on symbol
+    bulk = bulk.merge(ratios_small, on="symbol", how="left")
+
+    # --- Standardize metric names coming from bulk endpoint ---
     COLUMN_MAP = {
         "returnOnEquityTTM": "roeTTM",
         "returnOnAssetsTTM": "roaTTM",
@@ -192,7 +237,6 @@ def load_global_data():
         "evToEBITDATTM": "evToEbitdaTTM",
     }
 
-    # Apply renaming to bulk metrics
     bulk = bulk.rename(columns=COLUMN_MAP)
 
     results = {}
@@ -202,20 +246,12 @@ def load_global_data():
             holdings = get_etf_holdings(etf_symbol)
             merged = merge_etf_with_metrics(holdings, bulk)
 
-            # Apply same renaming to merged dataset
-            merged = merged.rename(columns=COLUMN_MAP)
-
             # Add sector and name enrichment
             merged["sector"] = merged["symbol"].map(sector_map)
             merged["name"] = merged["symbol"].map(name_map).fillna(merged["name"])
             merged["sector"] = merged["sector"].astype("string").fillna("Unknown")
 
-
             results[index_name] = merged
-            
-            # missing_symbols = merged.loc[merged["sector"].isna(), "symbol"].unique().tolist()
-            # print("Symbols missing sector:", missing_symbols[:50])
-
 
         except Exception as e:
             results[index_name] = pd.DataFrame({"error": [str(e)]})
