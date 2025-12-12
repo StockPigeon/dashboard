@@ -5,6 +5,7 @@ import streamlit as st
 import plotly.express as px
 from scipy.optimize import minimize
 import requests
+import re
 
 # NEW: import your dynamic global dataset
 from update_data import load_global_data
@@ -349,11 +350,313 @@ if index_filter:
 if sector_filter:
     df_filtered = df_filtered[df_filtered["sector"].isin(sector_filter)]
 
+
+# ---------------------------------------------
+# INVESTMENT IDEAS TOOL (helpers + function)
+# ---------------------------------------------
+def _safe_div(a, b):
+    try:
+        if pd.isna(a) or pd.isna(b) or b == 0:
+            return np.nan
+        return a / b
+    except Exception:
+        return np.nan
+
+def _compute_cagr(start, end, years):
+    try:
+        if pd.isna(start) or pd.isna(end) or start <= 0 or end <= 0 or years <= 0:
+            return np.nan
+        return (end / start) ** (1 / years) - 1
+    except Exception:
+        return np.nan
+
+def _detect_hist_columns(df, base_key):
+    """
+    Detect candidate historical columns by name pattern for the given base_key.
+    Returns a list of (order_key, col_name) sorted oldest..newest.
+
+    Matches patterns like:
+      - freeCashFlowPerShare_FY2021, _FY2022
+      - freeCashFlowPerShare_1Y, _2Y, _3Y
+      - freeCashFlowPerShare2021
+    """
+    cols = []
+    base_lower = base_key.lower().replace("ttm", "")
+    for c in df.columns:
+        cl = c.lower()
+        if base_lower in cl and c != base_key:
+            m_year = re.search(r'(?:fy)?(\d{4})', cl)
+            m_yago = re.search(r'_(\d+)y', cl)  # e.g., _1Y, _2Y
+            if m_year:
+                order = int(m_year.group(1))
+            elif m_yago:
+                order = -int(m_yago.group(1))  # older → more negative so sorts first
+            else:
+                m_num = re.search(r'_(\d+)$', cl)
+                order = int(m_num.group(1)) if m_num else cl
+            cols.append((order, c))
+    try:
+        cols.sort(key=lambda x: x[0])
+    except Exception:
+        cols.sort(key=lambda x: str(x[0]))
+    return cols
+
+def _compute_series_cagr(row, hist_cols):
+    """Given sorted historical columns (oldest..newest), compute CAGR."""
+    if not hist_cols or len(hist_cols) < 2:
+        return np.nan
+    start_val = row.get(hist_cols[0][1])
+    end_val   = row.get(hist_cols[-1][1])
+    years = len(hist_cols) - 1  # assume annual spacing
+    return _compute_cagr(start_val, end_val, years)
+
+def investment_ideas_tool(df_filtered):
+    st.subheader("Investment Ideas – Companies Passing All Hurdles")
+
+    st.markdown("""
+### Metrics, Formulas & Hurdles
+**1. Positive Operating Profit (proxy)**  
+*Formula:* `operatingIncome` history (preferred) or `operatingCashFlowPerShare` history  
+*Hurdle:* Positive for **each** of the past **7 years** (N/A → excluded)
+
+**2. Profit Margin**  
+*Formula:* `netIncomePerShareTTM / revenuePerShareTTM`  
+*Hurdle:* Margin > sector average  
+*Growth hurdle:* Margin CAGR ≥ **10% p.a.** (from historical NI/REV; N/A → excluded)
+
+**3. ROE**  
+*Formula:* `roeTTM`  
+*Hurdle:* ROE > **15%** for **last 4 quarters** and **each of last 3 FYs** (N/A → excluded)
+
+**4. Debt-to-Equity**  
+*Formula:* `debtToEquityTTM`  
+*Hurdle:* < sector average **AND** < **1.0**
+
+**5. Capex/OCF**  
+*Formula:* `capexToOperatingCashFlowTTM` if present, else `capexPerShareTTM / operatingCashFlowPerShareTTM`  
+*Hurdle:* < **20%**
+
+**6. Net Income / Tangible Assets**  
+*Formula:* `(netIncomePerShareTTM) / (tangibleBookValuePerShareTTM)`  
+*Hurdle:* > **20%**
+
+**7. FCF per Share**  
+*Formula:* `freeCashFlowPerShareTTM`
+
+**8. Price per Share**  
+*Formula:* `marketCapTTM / shares_outstanding_proxy`  
+*Shares proxy:* `marketCapTTM / (priceToSalesRatioTTM * revenuePerShareTTM)`
+
+**9. FCF Growth Rate (CAGR)**  
+*Formula:* CAGR using historical `freeCashFlowPerShare_*` columns (e.g., `_FY2021`, `_3Y`)  
+(N/A → excluded from ranking)
+
+**10. Ranking Metric**  
+*Formula:* `(Price per Share / FCF per Share) / FCF Growth Rate`  
+(applied only to companies that pass all hurdles and have positive FCF growth)
+
+**11. P/E**  
+*Formula:* `peRatioTTM`
+
+**12. Price/FCF**  
+*Formula:* `Price per Share / FCF per Share`
+
+**Important:** We do not fabricate data. If a required metric cannot be calculated, it is **shown as N/A** and the company is **excluded** (because all hurdles must be met).
+    """)
+
+    # Make sure numeric fields are numeric
+    num_cols = [
+        "operatingCashFlowPerShareTTM",
+        "netIncomePerShareTTM",
+        "revenuePerShareTTM",
+        "tangibleBookValuePerShareTTM",
+        "debtToEquityTTM",
+        "roeTTM",
+        "freeCashFlowPerShareTTM",
+        "marketCapTTM",
+        "priceToSalesRatioTTM",
+        "capexPerShareTTM",
+        "capexToOperatingCashFlowTTM",
+        "peRatioTTM",
+        "retainedEarningsTTM",
+        "operatingIncomeTTM",
+    ]
+    dfN = numericify(df_filtered, num_cols)
+
+    # Sector averages
+    sector_averages = dfN.groupby("sector").agg({
+        "netIncomePerShareTTM": "mean",
+        "revenuePerShareTTM": "mean",
+        "debtToEquityTTM": "mean",
+    }).rename(columns={
+        "netIncomePerShareTTM": "sector_net_income",
+        "revenuePerShareTTM": "sector_revenue",
+        "debtToEquityTTM": "sector_dte",
+    })
+    dfN = dfN.merge(sector_averages, left_on="sector", right_index=True, how="left")
+
+    # Detect history columns
+    fcf_hist_cols = _detect_hist_columns(dfN, "freeCashFlowPerShareTTM")
+    ni_hist_cols  = _detect_hist_columns(dfN, "netIncomePerShareTTM")
+    rev_hist_cols = _detect_hist_columns(dfN, "revenuePerShareTTM")
+    roe_hist_cols = _detect_hist_columns(dfN, "roeTTM")
+    op_inc_hist   = _detect_hist_columns(dfN, "operatingIncomeTTM")
+    op_cf_hist    = _detect_hist_columns(dfN, "operatingCashFlowPerShareTTM")
+    ret_earn_hist = _detect_hist_columns(dfN, "retainedEarningsTTM")
+    ps_hist       = _detect_hist_columns(dfN, "priceToSalesRatioTTM")
+    revps_hist    = _detect_hist_columns(dfN, "revenuePerShareTTM")
+
+    rows_out = []
+
+    for _, row in dfN.iterrows():
+        # 1) Positive operating profit for 7 years
+        op_series = []
+        if op_inc_hist and len(op_inc_hist) >= 7:
+            op_series = [row.get(cname) for _, cname in op_inc_hist[-7:]]
+        elif op_cf_hist and len(op_cf_hist) >= 7:
+            op_series = [row.get(cname) for _, cname in op_cf_hist[-7:]]
+        op7_check = (len(op_series) == 7 and all(pd.notna(v) and v > 0 for v in op_series))
+        op7_val = "✅ 7/7 positive" if op7_check else "N/A"
+
+        # 2) Profit margin vs sector and margin CAGR ≥ 10%
+        margin = _safe_div(row.get("netIncomePerShareTTM"), row.get("revenuePerShareTTM"))
+        sector_margin = _safe_div(row.get("sector_net_income"), row.get("sector_revenue"))
+        margin_above_sector = (pd.notna(margin) and pd.notna(sector_margin) and margin > sector_margin)
+
+        margin_cagr = np.nan
+        margin_cagr_check = False
+        if ni_hist_cols and rev_hist_cols and len(ni_hist_cols) >= 2 and len(rev_hist_cols) >= 2:
+            start_margin = _safe_div(row.get(ni_hist_cols[0][1]), row.get(rev_hist_cols[0][1]))
+            end_margin   = _safe_div(row.get(ni_hist_cols[-1][1]), row.get(rev_hist_cols[-1][1]))
+            years = max(1, len(ni_hist_cols) - 1)
+            margin_cagr = _compute_cagr(start_margin, end_margin, years)
+            margin_cagr_check = pd.notna(margin_cagr) and margin_cagr >= 0.10
+
+        # 3) ROE > 15% last 4Q and each of last 3 FYs + TTM > 15%
+        roe_ttm = row.get("roeTTM")
+        roe_ttm_check = (pd.notna(roe_ttm) and roe_ttm > 0.15)
+        roe_q_check = False
+        roe_y_check = False
+        if roe_hist_cols and len(roe_hist_cols) >= 4:
+            last4 = [row.get(cname) for _, cname in roe_hist_cols[-4:]]
+            roe_q_check = all(pd.notna(v) and v > 0.15 for v in last4)
+        if roe_hist_cols and len(roe_hist_cols) >= 3:
+            last3_years = [row.get(cname) for _, cname in roe_hist_cols[-3:]]
+            roe_y_check = all(pd.notna(v) and v > 0.15 for v in last3_years)
+
+        # 4) Debt-to-equity < sector avg and < 1
+        dte = row.get("debtToEquityTTM")
+        sector_dte = row.get("sector_dte")
+        dte_check = (pd.notna(dte) and pd.notna(sector_dte) and dte < sector_dte and dte < 1.0)
+
+        # 5) Capex/OCF < 20%
+        if "capexToOperatingCashFlowTTM" in dfN.columns and pd.notna(row.get("capexToOperatingCashFlowTTM")):
+            capex_ratio = row.get("capexToOperatingCashFlowTTM")
+        else:
+            capex_ratio = _safe_div(row.get("capexPerShareTTM"), row.get("operatingCashFlowPerShareTTM"))
+        capex_check = (pd.notna(capex_ratio) and capex_ratio < 0.20)
+
+        # 6) Net income / tangible assets > 20%
+        ni_ta = _safe_div(row.get("netIncomePerShareTTM"), row.get("tangibleBookValuePerShareTTM"))
+        ni_ta_check = (pd.notna(ni_ta) and ni_ta > 0.20)
+
+        # 7) FCF per share
+        fcf_ps = row.get("freeCashFlowPerShareTTM")
+
+        # 8) Price per share via shares proxy
+        shares_outstanding = _safe_div(row.get("marketCapTTM"), row.get("priceToSalesRatioTTM") * row.get("revenuePerShareTTM"))
+        price_ps = _safe_div(row.get("marketCapTTM"), shares_outstanding)
+
+        # 9) FCF growth rate (CAGR)
+        fcf_growth_rate = np.nan
+        if fcf_hist_cols and len(fcf_hist_cols) >= 2:
+            fcf_growth_rate = _compute_series_cagr(row, fcf_hist_cols)
+
+        # 10) Ranking metric
+        ranking_metric = np.nan
+        if pd.notna(price_ps) and pd.notna(fcf_ps) and pd.notna(fcf_growth_rate) and fcf_growth_rate > 0:
+            ranking_metric = (price_ps / fcf_ps) / fcf_growth_rate
+
+        # 11) P/E
+        pe_ratio = row.get("peRatioTTM")
+
+        # 12) Price/FCF
+        price_fcf = _safe_div(price_ps, fcf_ps)
+
+        # Proportionate increase in share price vs retained earnings over 5Y (>1 required)
+        price5_ratio = "N/A"
+        prop_check = False
+        if ps_hist and revps_hist and len(ps_hist) >= 2 and len(revps_hist) >= 2 and ret_earn_hist and len(ret_earn_hist) >= 2:
+            # proxy price = (P/S) * (Revenue/Share)
+            price_old = _safe_div(row.get(ps_hist[0][1]) * row.get(revps_hist[0][1]), 1.0)
+            price_new = _safe_div(row.get(ps_hist[-1][1]) * row.get(revps_hist[-1][1]), 1.0)
+            re_old = row.get(ret_earn_hist[0][1])
+            re_new = row.get(ret_earn_hist[-1][1])
+
+            price_change = _safe_div(price_new - price_old, abs(price_old)) if pd.notna(price_old) and price_old != 0 else np.nan
+            re_change    = _safe_div(re_new - re_old, abs(re_old)) if pd.notna(re_old) and re_old != 0 else np.nan
+
+            if pd.notna(price_change) and pd.notna(re_change) and re_change != 0:
+                ratio = price_change / re_change
+                price5_ratio = f"{ratio:.2f}"
+                prop_check = ratio > 1
+
+        # Strict pass: must meet ALL hurdles
+        passes_all = all([
+            op7_check,
+            margin_above_sector,
+            margin_cagr_check,
+            roe_ttm_check,
+            roe_q_check,
+            roe_y_check,
+            dte_check,
+            capex_check,
+            ni_ta_check,
+            prop_check,
+        ])
+
+        if passes_all:
+            rows_out.append({
+                "Symbol": row.get("symbol"),
+                "Name": row.get("name"),
+                "Sector": row.get("sector"),
+                "Positive Op Profit (7y)": op7_val,
+                "Profit Margin (%)": f"{(margin * 100):.2f}%" if pd.notna(margin) else "N/A",
+                "Sector Margin (%)": f"{(sector_margin * 100):.2f}%" if pd.notna(sector_margin) else "N/A",
+                "Margin CAGR (%, ≥10%)": f"{(margin_cagr * 100):.2f}%" if pd.notna(margin_cagr) else "N/A",
+                "ROE TTM (%)": f"{(roe_ttm * 100):.2f}%" if pd.notna(roe_ttm) else "N/A",
+                "ROE last 4Q": "✅" if roe_q_check else "❌",
+                "ROE last 3 FY": "✅" if roe_y_check else "❌",
+                "Debt/Equity": f"{dte:.2f}" if pd.notna(dte) else "N/A",
+                "Sector D/E": f"{sector_dte:.2f}" if pd.notna(sector_dte) else "N/A",
+                "Capex/OCF (%)": f"{(capex_ratio * 100):.2f}%" if pd.notna(capex_ratio) else "N/A",
+                "NI / Tangible Assets (%)": f"{(ni_ta * 100)::.2f}%" if pd.notna(ni_ta) else "N/A",
+                "Price per Share": f"{price_ps:.2f}" if pd.notna(price_ps) else "N/A",
+                "FCF per Share": f"{fcf_ps:.2f}" if pd.notna(fcf_ps) else "N/A",
+                "FCF Growth Rate (CAGR)": f"{(fcf_growth_rate * 100):.2f}%" if pd.notna(fcf_growth_rate) else "N/A",
+                "P/E": f"{pe_ratio:.2f}" if pd.notna(pe_ratio) else "N/A",
+                "Price/FCF": f"{price_fcf:.2f}" if pd.notna(price_fcf) else "N/A",
+                "5Y Price vs Ret. Earn. Ratio": price5_ratio,
+                "Ranking Metric": f"{(((price_ps / fcf_ps) / fcf_growth_rate)):.2f}" if (pd.notna(price_ps) and pd.notna(fcf_ps) and pd.notna(fcf_growth_rate) and fcf_growth_rate > 0) else "N/A",
+            })
+
+    if not rows_out:
+        st.warning("No companies passed all metric hurdles with available multi-year data.")
+    else:
+        df_out = pd.DataFrame(rows_out)
+        # Sort by Ranking Metric (numeric only)
+        with np.errstate(invalid='ignore'):
+            df_out["_rank_sort"] = pd.to_numeric(df_out["Ranking Metric"], errors="coerce")
+        df_out = df_out.sort_values(by="_rank_sort", ascending=True).drop(columns="_rank_sort")
+        st.dataframe(df_out, use_container_width=True)
+
+
 # -------------------------
 # MAIN LAYOUT
 # -------------------------
 st.title("Equity Valuation Dashboard")
 st.caption("S&P 500 & NASDAQ 100 — sector valuations, spreads, factor scores & screens")
+
 
 (
     tab_overview,
@@ -364,16 +667,18 @@ st.caption("S&P 500 & NASDAQ 100 — sector valuations, spreads, factor scores &
     tab_portfolio,
     tab_buffett,
     tab_table,
+    tab_invest,  # NEW
 ) = st.tabs(
     [
         "Overview",
         "Sector Heatmap",
         "Value vs Quality",
         "P/E vs EV/EBITDA",
-        "ROIC vs Earnings Yield",
+               "ROIC vs Earnings Yield",
         "Portfolio Optimizer",
         "Buffett Screen",
         "Data Table",
+        "Investment Ideas",  # NEW
     ]
 )
 
@@ -1038,6 +1343,11 @@ with tab_buffett:
                 use_container_width=True,
             )
 
+# -------------------------
+# INVESTMENT IDEAS TAB (NEW)
+# -------------------------
+with tab_invest:
+    investment_ideas_tool(df_filtered)
 
 # -------------------------
 # DATA TABLE TAB
@@ -1052,4 +1362,5 @@ with tab_table:
     st.caption(
         "Showing first 500 rows for performance. "
         "Export from the original CSVs if you need the full dataset."
+
     )
